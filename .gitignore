@@ -1,0 +1,19 @@
+# PyInstaller build folders
+/build/
+/dist/
+
+# PyInstaller spec file
+*.spec
+
+# Generated DXF files
+*.dxf
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
+
