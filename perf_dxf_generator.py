@@ -14,8 +14,16 @@ def get_float(prompt, default=None):
         print("Invalid input. Please enter a number.")
         return get_float(prompt, default)
 
-shape_choice = input("Choose outer shape (circle or rectangle) [circle]: ").strip().lower() or "circle"
-if shape_choice not in {"circle", "rectangle"}:
+shape_choice = input(
+    "Choose outer shape circle (c) or rectangle (r) [circle]: "
+).strip().lower()
+if not shape_choice:
+    shape_choice = "circle"
+if shape_choice in {"c", "circle"}:
+    shape_choice = "circle"
+elif shape_choice in {"r", "rectangle"}:
+    shape_choice = "rectangle"
+else:
     print("Invalid choice. Defaulting to circle.")
     shape_choice = "circle"
 
