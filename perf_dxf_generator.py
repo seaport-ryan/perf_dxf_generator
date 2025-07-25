@@ -72,16 +72,21 @@ else:
 
 grid_steps_x = math.ceil(grid_span_x / step)
 grid_steps_y = math.ceil(grid_span_y / step)
-grid_width_x = grid_steps_x * step
-grid_width_y = grid_steps_y * step
+
+# Actual width and height of the grid of squares (without the extra spacing
+# at the far edges) so that the pattern is centered around (0, 0).
+grid_width_x = (grid_steps_x - 1) * step + square_size
+grid_width_y = (grid_steps_y - 1) * step + square_size
+
+# Starting offset so the pattern is centered around the origin
 grid_offset_x = -grid_width_x / 2
 grid_offset_y = -grid_width_y / 2
 
 # Loop over grid positions
-x = grid_offset_x
-while x < -grid_offset_x + grid_width_x:
-    y = grid_offset_y
-    while y < -grid_offset_y + grid_width_y:
+for i in range(grid_steps_x):
+    x = grid_offset_x + i * step
+    for j in range(grid_steps_y):
+        y = grid_offset_y + j * step
         square = Polygon([
             (0, 0),
             (square_size, 0),
@@ -97,8 +102,6 @@ while x < -grid_offset_x + grid_width_x:
             elif clipped.geom_type == 'MultiPolygon':
                 for geom in clipped.geoms:
                     msp.add_lwpolyline(list(geom.exterior.coords), close=True)
-        y += step
-    x += step
 
 # Save DXF
 output_filename = f"{shape_choice}_grid_trimmed_centered.dxf"
