@@ -41,6 +41,7 @@ step = square_size + spacing
 
 # --- DXF Setup ---
 doc = ezdxf.new()
+doc.header["$INSUNITS"] = 1
 msp = doc.modelspace()
 
 if shape_choice == "rectangle":
