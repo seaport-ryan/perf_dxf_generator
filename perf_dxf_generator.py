@@ -35,41 +35,30 @@ else:
     hole_size   = get_float("Enter circle diameter in inches (e.g. 1): ")
     hole_radius = hole_size / 2.0
 
+# spacing is center-to-center
 spacing = get_float("Enter center-to-center spacing between holes in inches (e.g. 2): ")
+
 pattern_choice = (input("Choose pattern straight or staggered [straight]: ").strip().lower() or "straight")
 pattern_choice = pattern_choice if pattern_choice in {"straight","staggered"} else "straight"
-
-step = spacing  # always center-to-center
+step = spacing
 
 # DXF
 doc = ezdxf.new()
 doc.header["$INSUNITS"] = 1
 msp = doc.modelspace()
 
-# Outer + inner (clipping/reference) shapes
+# Outer + inner shapes
 if shape_choice == "rectangle":
     inner_length = outer_length - 2*offset
     inner_width  = outer_width  - 2*offset
     if inner_length <= 0 or inner_width <= 0:
         raise ValueError("Offset too large for given rectangle dimensions.")
-
-    # draw outer
-    outer_rect = Polygon([
-        (-outer_length/2, -outer_width/2),
-        ( outer_length/2, -outer_width/2),
-        ( outer_length/2,  outer_width/2),
-        (-outer_length/2,  outer_width/2),
-    ])
+    outer_rect = Polygon([(-outer_length/2,-outer_width/2),(outer_length/2,-outer_width/2),
+                          (outer_length/2,outer_width/2),(-outer_length/2,outer_width/2)])
     msp.add_lwpolyline(list(outer_rect.exterior.coords), close=True)
 
-    # inner region for clipping/reference
-    inner_rect = Polygon([
-        (-inner_length/2, -inner_width/2),
-        ( inner_length/2, -inner_width/2),
-        ( inner_length/2,  inner_width/2),
-        (-inner_length/2,  inner_width/2),
-    ])
-
+    inner_region = Polygon([(-inner_length/2,-inner_width/2),(inner_length/2,-inner_width/2),
+                            (inner_length/2,inner_width/2),(-inner_length/2,inner_width/2)])
     grid_span_x = inner_length
     grid_span_y = inner_width
 else:
@@ -77,57 +66,64 @@ else:
     if inner_radius <= 0:
         raise ValueError("Offset too large for given diameter.")
     msp.add_circle(center=(0,0), radius=outer_diameter/2)
-    inner_disk = Point(0,0).buffer(inner_radius, resolution=180)
+    inner_region = Point(0,0).buffer(inner_radius, resolution=180)
     grid_span_x = grid_span_y = inner_radius*2
 
-# Square hole geometry (centered) for clipping; circles will not use Shapely
+# Square hole proto (centered). Circles will use buffer only when clipped.
 def square_geom_centered(s):
     h = s/2.0
     return Polygon([(-h,-h),(h,-h),(h,h),(-h,h)])
-
 square_proto = square_geom_centered(hole_size) if hole_shape_choice=="square" else None
 
-# Grid of centers
+# Build centers
 if pattern_choice == "straight":
     nx = math.ceil(grid_span_x/step) + 1
     ny = math.ceil(grid_span_y/step) + 1
-    wX = (nx-1)*step
-    wY = (ny-1)*step
-    x0 = -wX/2.0
-    y0 = -wY/2.0
+    wX = (nx-1)*step; wY = (ny-1)*step
+    x0 = -wX/2; y0 = -wY/2
     centers = [(x0 + i*step, y0 + j*step) for i in range(nx) for j in range(ny)]
 else:
-    row_step = step*math.sqrt(3)/2.0
+    row_step = step*math.sqrt(3)/2
     ny = math.ceil(grid_span_y/row_step) + 1
     nx = math.ceil(grid_span_x/step) + 2
-    wX = (nx-1)*step
-    wY = (ny-1)*row_step
-    x0 = -wX/2.0
-    y0 = -wY/2.0
+    wX = (nx-1)*step; wY = (ny-1)*row_step
+    x0 = -wX/2; y0 = -wY/2
     centers = []
     for j in range(ny):
         y = y0 + j*row_step
-        xoff = step/2.0 if (j % 2 == 1) else 0.0
+        xoff = step/2 if (j % 2 == 1) else 0
         for i in range(nx):
             centers.append((x0 + i*step + xoff, y))
 
-# Draw holes
+# ---- Draw holes (full circles as CIRCLEs; clipped holes as polylines) ----
 for (x, y) in centers:
     if hole_shape_choice == "circle":
-        # Only add if the entire circle fits inside the inner boundary
+        # First check for full containment
+        fully_inside = False
         if shape_choice == "rectangle":
-            if (abs(x) <= inner_length/2 - hole_radius) and (abs(y) <= inner_width/2 - hole_radius):
-                msp.add_circle(center=(x, y), radius=hole_radius)
+            fully_inside = (abs(x) <= inner_region.bounds[2] - hole_radius) and (abs(y) <= inner_region.bounds[3] - hole_radius)
+            # bounds[2]=maxx, bounds[3]=maxy for inner_region (axis-aligned rectangle)
         else:
-            if math.hypot(x, y) <= inner_radius - hole_radius:
-                msp.add_circle(center=(x, y), radius=hole_radius)
+            fully_inside = (math.hypot(x, y) <= inner_radius - hole_radius)
+
+        if fully_inside:
+            msp.add_circle(center=(x, y), radius=hole_radius)
+        else:
+            # Intersect a circle outline with the inner region and draw the clip as polylines
+            # Use moderate resolution for fewer vertices; increase if you want smoother arcs.
+            circle_poly = Point(x, y).buffer(hole_radius, resolution=96)
+            clipped = circle_poly.intersection(inner_region)
+            if clipped.is_empty:
+                continue
+            if clipped.geom_type == "Polygon":
+                msp.add_lwpolyline(list(clipped.exterior.coords), close=True)
+            elif clipped.geom_type == "MultiPolygon":
+                for geom in clipped.geoms:
+                    msp.add_lwpolyline(list(geom.exterior.coords), close=True)
     else:
-        # Square: clip to inner boundary to allow edge trims (polylines)
+        # squares: clip as before
         g = translate(square_proto, xoff=x, yoff=y)
-        if shape_choice == "rectangle":
-            clipped = g.intersection(inner_rect)
-        else:
-            clipped = g.intersection(inner_disk)
+        clipped = g.intersection(inner_region)
         if clipped.is_empty:
             continue
         if clipped.geom_type == "Polygon":
