@@ -1,126 +1,108 @@
 #!/usr/bin/env bash
-# build.sh — Clean build + Windows .exe (PyInstaller) for perf_dxf_generator
-# Run from Git Bash at repo root:
-#   ./build.sh
-# Optional env overrides:
-#   CLEAN=0 ./build.sh                 # keep previous build
-#   CONSOLE=0 ./build.sh               # hide console (windowed)
-#   FORCE_SPEC_REGEN=1 ./build.sh      # ignore .spec; rebuild from args
-#   VENV_DIR=.venv PYTHON="py -3.11" ./build.sh
+# build.sh — Build Perf DXF Generator GUI into a Windows .exe via PyInstaller.
+# Run from Git Bash at the repo root:  ./build.sh
+#
+# Env overrides:
+#   CLEAN=0            # don’t delete build/ and dist/
+#   ONEFILE=1          # package as a single exe (default 1)
+#   CONSOLE=0          # hide console window (default 0 = windowed app)
+#   PYTHON="py -3.11"  # python launcher to use (default: python)
+#   APP_NAME=perf_dxf_generator
+#   ENTRYPOINT=perf_dxf_gui.py
+#   ICON=perf.ico
 
 set -Eeuo pipefail
 
-# ----- App-specific defaults --------------------------------------------------
+# -------- Defaults -------------------------------------------------------------
 APP_NAME="${APP_NAME:-perf_dxf_generator}"
-ENTRYPOINT="${ENTRYPOINT:-perf_dxf_generator.py}"
-SPEC_FILE="${SPEC_FILE:-perf_dxf_generator.spec}"
-ICON_FILE="${ICON_FILE:-perf.ico}"
+ENTRYPOINT="${ENTRYPOINT:-perf_dxf_gui.py}"
+ICON="${ICON:-perf.ico}"
+PYTHON_BIN="${PYTHON:-python}"
 
-# Behavior toggles
-CLEAN="${CLEAN:-1}"            # 1=rm -rf build/ dist/
-CONSOLE="${CONSOLE:-1}"        # 1=console app (CLI), 0=windowed
-FORCE_SPEC_REGEN="${FORCE_SPEC_REGEN:-}"  # non-empty = ignore .spec, rebuild from args
+CLEAN="${CLEAN:-1}"
+ONEFILE="${ONEFILE:-1}"
+CONSOLE="${CONSOLE:-0}"   # 0 => --windowed, 1 => console
 
-# Python / venv
-VENV_DIR="${VENV_DIR:-.venv}"
-PYTHON="${PYTHON:-}"           # e.g., "py -3.11" or "C:/Python311/python.exe"
-
+# -------- Helpers --------------------------------------------------------------
 say() { printf "\033[1;36m%s\033[0m\n" "$*"; }
+ok()  { printf "\033[1;32m%s\033[0m\n" "$*"; }
 err() { printf "\033[1;31m%s\033[0m\n" "$*" >&2; }
-exists() { command -v "$1" >/dev/null 2>&1; }
 
-# ----- Resolve Python ---------------------------------------------------------
-if [[ -z "$PYTHON" ]]; then
-  if exists py; then
-    PYTHON="py -3"
-  elif exists python3; then
-    PYTHON="python3"
-  elif exists python; then
-    PYTHON="python"
-  else
-    err "No Python found on PATH. Install Python 3.x."
-    exit 1
-  fi
+# -------- Preflight ------------------------------------------------------------
+if [[ ! -f "$ENTRYPOINT" ]]; then
+  err "Cannot find entrypoint: $ENTRYPOINT"
+  exit 1
 fi
 
-# ----- Enter repo root --------------------------------------------------------
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT"
-
-# ----- Create / activate venv -------------------------------------------------
-if [[ ! -d "$VENV_DIR" ]]; then
-  say "Creating venv at $VENV_DIR"
-  eval "$PYTHON -m venv \"$VENV_DIR\""
+if ! command -v $PYTHON_BIN >/dev/null 2>&1; then
+  err "Python not found: $PYTHON_BIN"
+  exit 1
 fi
 
-# shellcheck disable=SC1091
-source "$VENV_DIR/Scripts/activate" 2>/dev/null || source "$VENV_DIR/bin/activate"
+say "Using Python: $($PYTHON_BIN -V 2>&1)"
 
-# ----- Dependencies -----------------------------------------------------------
-say "Upgrading pip & wheel…"
-python -m pip install --upgrade pip wheel >/dev/null
-
-if [[ -f "requirements.txt" ]]; then
-  say "Installing requirements.txt…"
-  python -m pip install -r "requirements.txt"
+# Ensure pyinstaller is available
+if ! $PYTHON_BIN -c "import PyInstaller" >/dev/null 2>&1; then
+  say "Installing PyInstaller..."
+  $PYTHON_BIN -m pip install --upgrade pip
+  $PYTHON_BIN -m pip install pyinstaller
 fi
 
-python -c "import PyInstaller" 2>/dev/null || {
-  say "Installing PyInstaller…"
-  python -m pip install pyinstaller
-}
+# Shapely / ezdxf are required by the generator
+$PYTHON_BIN -m pip install --upgrade ezdxf shapely >/dev/null
 
-# ----- Clean previous build ---------------------------------------------------
+# -------- Clean old artifacts --------------------------------------------------
 if [[ "$CLEAN" == "1" ]]; then
-  say "Cleaning build artifacts…"
-  rm -rf "build/" "dist/"
+  say "Cleaning build/ and dist/..."
+  rm -rf build dist
 fi
 
-# ----- Build with spec if available (unless forced off) -----------------------
-USE_SPEC=""
-if [[ -z "$FORCE_SPEC_REGEN" && -f "$SPEC_FILE" ]]; then
-  USE_SPEC="$SPEC_FILE"
+# -------- PyInstaller options --------------------------------------------------
+WINMODE="--windowed"
+if [[ "$CONSOLE" == "1" ]]; then
+  WINMODE="--console"
 fi
 
-if [[ -n "$USE_SPEC" ]]; then
-  say "Building with spec: $USE_SPEC"
-  # --noconfirm overwrites previous outputs without prompt
-  pyinstaller --noconfirm "$USE_SPEC"
+PACKMODE="--onefile"
+if [[ "$ONEFILE" != "1" ]]; then
+  PACKMODE="--onedir"
+fi
+
+ICON_ARG=""
+if [[ -f "$ICON" ]]; then
+  ICON_ARG="--icon=$ICON"
+  say "Using icon: $ICON"
 else
-  say "Building from CLI args (no spec)…"
-  # Compose PyInstaller args
-  ARGS=( --noconfirm --clean --onefile --name "$APP_NAME" )
-  if [[ "$CONSOLE" == "0" ]]; then
-    ARGS+=( --noconsole )
-  fi
-  if [[ -f "$ICON_FILE" ]]; then
-    ARGS+=( --icon "$ICON_FILE" )
-  fi
-
-  # Ensure entrypoint exists
-  if [[ ! -f "$ENTRYPOINT" ]]; then
-    err "Entrypoint not found: $ENTRYPOINT"
-    exit 1
-  fi
-
-  pyinstaller "${ARGS[@]}" "$ENTRYPOINT"
+  say "Icon not found ($ICON); continuing without custom icon."
 fi
 
-# ----- Convenience: ensure dist/<name>.exe exists at top-level dist ----------
-if [[ -f "dist/${APP_NAME}/${APP_NAME}.exe" ]]; then
-  cp -f "dist/${APP_NAME}/${APP_NAME}.exe" "dist/${APP_NAME}.exe"
-fi
+# Collect all data/hooks for shapely & ezdxf to avoid missing libs at runtime
+COLLECT_ARGS="
+  --collect-all shapely
+  --collect-all ezdxf
+"
 
-# ----- Done -------------------------------------------------------------------
+# -------- Build ----------------------------------------------------------------
+say "Building $APP_NAME from $ENTRYPOINT ..."
+set -x
+$PYTHON_BIN -m PyInstaller \
+  --noconfirm \
+  --clean \
+  $PACKMODE \
+  $WINMODE \
+  --name "$APP_NAME" \
+  $ICON_ARG \
+  $COLLECT_ARGS \
+  "$ENTRYPOINT"
+set +x
+
+# -------- Result ----------------------------------------------------------------
 if [[ -f "dist/${APP_NAME}.exe" ]]; then
-  say "Build complete → dist/${APP_NAME}.exe"
+  ok "Build complete → dist/${APP_NAME}.exe"
+elif [[ -f "dist/${APP_NAME}/${APP_NAME}.exe" ]]; then
+  ok "Build complete → dist/${APP_NAME}/${APP_NAME}.exe"
 else
-  # Some specs output directly to dist/appname.exe already
-  if [[ -f "dist/${APP_NAME}/${APP_NAME}.exe" ]]; then
-    say "Build complete → dist/${APP_NAME}/${APP_NAME}.exe"
-  else
-    err "Could not find the built exe. Check PyInstaller output above."
-    exit 1
-  fi
+  err "Could not find the built exe. See PyInstaller output above."
+  exit 1
 fi
 
