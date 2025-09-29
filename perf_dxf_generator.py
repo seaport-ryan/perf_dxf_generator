@@ -34,10 +34,30 @@ else:
     outer_diameter = get_float("Enter outer diameter in inches (e.g. 25.875): ")
 
 offset = get_float("Enter offset from edge in inches (default 0.125): ", default=0.125)
-square_size = get_float("Enter square size in inches (e.g. 1): ")
-spacing = get_float("Enter spacing between squares in inches (e.g. 0.1875): ")
 
-step = square_size + spacing
+hole_shape_choice = input(
+    "Choose hole shape square (s) or circle (c) [square]: "
+).strip().lower()
+if not hole_shape_choice:
+    hole_shape_choice = "square"
+if hole_shape_choice in {"s", "square"}:
+    hole_shape_choice = "square"
+elif hole_shape_choice in {"c", "circle"}:
+    hole_shape_choice = "circle"
+else:
+    print("Invalid choice. Defaulting to square.")
+    hole_shape_choice = "square"
+
+if hole_shape_choice == "square":
+    hole_size = get_float("Enter square size in inches (e.g. 1): ")
+    hole_radius = None
+else:
+    hole_size = get_float("Enter circle diameter in inches (e.g. 1): ")
+    hole_radius = hole_size / 2
+
+spacing = get_float("Enter spacing between holes in inches (e.g. 0.1875): ")
+
+step = hole_size + spacing
 
 # --- DXF Setup ---
 doc = ezdxf.new()
@@ -65,8 +85,8 @@ if shape_choice == "rectangle":
         (-inner_length / 2, inner_width / 2),
     ])
 
-    grid_span_x = inner_length + square_size
-    grid_span_y = inner_width + square_size
+    grid_span_x = inner_length + hole_size
+    grid_span_y = inner_width + hole_size
 else:
     inner_radius = (outer_diameter / 2) - offset
     if inner_radius <= 0:
@@ -76,16 +96,16 @@ else:
 
     clipping_shape = Point(0, 0).buffer(inner_radius, resolution=180)
 
-    grid_span_x = inner_radius * 2 + square_size
+    grid_span_x = inner_radius * 2 + hole_size
     grid_span_y = grid_span_x
 
 grid_steps_x = math.ceil(grid_span_x / step)
 grid_steps_y = math.ceil(grid_span_y / step)
 
-# Actual width and height of the grid of squares (without the extra spacing
+# Actual width and height of the grid of holes (without the extra spacing
 # at the far edges) so that the pattern is centered around (0, 0).
-grid_width_x = (grid_steps_x - 1) * step + square_size
-grid_width_y = (grid_steps_y - 1) * step + square_size
+grid_width_x = (grid_steps_x - 1) * step + hole_size
+grid_width_y = (grid_steps_y - 1) * step + hole_size
 
 # Starting offset so the pattern is centered around the origin
 grid_offset_x = -grid_width_x / 2
@@ -96,14 +116,18 @@ for i in range(grid_steps_x):
     x = grid_offset_x + i * step
     for j in range(grid_steps_y):
         y = grid_offset_y + j * step
-        square = Polygon([
-            (0, 0),
-            (square_size, 0),
-            (square_size, square_size),
-            (0, square_size)
-        ])
-        square_moved = translate(square, xoff=x, yoff=y)
-        clipped = square_moved.intersection(clipping_shape)
+        if hole_shape_choice == "square":
+            hole_geom = Polygon([
+                (0, 0),
+                (hole_size, 0),
+                (hole_size, hole_size),
+                (0, hole_size)
+            ])
+        else:
+            hole_geom = Point(hole_radius, hole_radius).buffer(hole_radius, resolution=180)
+
+        hole_moved = translate(hole_geom, xoff=x, yoff=y)
+        clipped = hole_moved.intersection(clipping_shape)
 
         if not clipped.is_empty:
             if clipped.geom_type == 'Polygon':
